@@ -5,6 +5,9 @@ from create_db import createDB
 import sqlite3
 import redis
 import json
+import boto3
+import logging
+from botocore.exceptions import ClientError
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
@@ -33,19 +36,19 @@ def cadastrar():
     if not image.filename.endswith(('.png', '.jpg', '.jpeg')):
         logger.error('Formato de imagem não suportado')
         return jsonify({'error': 'Formato de imagem não suportado'}), 400
-    
+
     image_local = f'uploads/images/{image_name}_{image.filename}'
     bucket = "bucket"
     target_image = f"folder/{image.filename}"
 
     image.save(image_local)
     logger.info(f'Imagem salva localmente: {image_local}')
-    
+
     s3_storage.upload(bucket, image_local, target_image)
     logger.info('Imagem carregada para o S3')
-    
+
     return 'Imagem cadastrada com sucesso!', 201
-    
+
 # Rota para listar todas as imagens enviadas
 @app.route('/listar')
 def listar():
@@ -108,6 +111,27 @@ def log_device(id_device):
         logger.error(f'Erro ao receber logs do dispositivo {id_device}: {err}')
         return 'Erro ao receber logs do dispositivo', 500
 
+# Rota para enviar uma imagem do bucket local para um bucket do S3
+@app.route('/post_file_to_S3/<bucket>/<path:image_path>', methods=['POST'])
+def post_file_to_S3(bucket, image_path):
+    try:
+        image, status = s3_storage.get_image_bucket(bucket, image_path)
+
+        # Verifique se a imagem foi obtida com sucesso do bucket local
+        if image is not None:
+            # SDK AWS Boto3 para enviar a imagem para o bucket do S3
+            s3 = boto3.client('s3')
+            try:
+               response = s3.upload_file(image, bucket, image_path)
+            except ClientError as e:
+                logging.error(e)
+                return 'Erro ao enviar imagem para o bucket do S3', 500
+            return 'Imagem enviada com sucesso para o bucket do S3', 200
+        else:
+            return f"Erro na leitura do bucket local: {status}", 404
+    except Exception as err:
+        logger.error(f'Erro ao obter imagem do bucket local: {err}')
+        return 'Erro ao obter imagem do bucket local', 500
 
 @app.route('/', methods=['GET'])
 def status():
